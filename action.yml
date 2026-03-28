@@ -5,6 +5,10 @@ inputs:
   health-url:
     required: true
     description: 'The full URL of the health endpoint (e.g., https://api.example.com/health)'
+  expected-content:
+    required: false
+    default: ''
+    description: 'Optional string that must appear in the response body (e.g., a commit SHA). When empty, only HTTP 200 is checked.'
   max-attempts:
     required: false
     default: '20'
@@ -21,17 +25,34 @@ runs:
       shell: bash
       run: |
         HEALTH_URL="${{ inputs.health-url }}"
+        EXPECTED_CONTENT="${{ inputs.expected-content }}"
         MAX_ATTEMPTS=${{ inputs.max-attempts }}
         RETRY_INTERVAL=${{ inputs.retry-interval }}
         ATTEMPT=1
 
         echo "Verifying deployment at: $HEALTH_URL"
         echo "Max attempts: $MAX_ATTEMPTS, retry interval: ${RETRY_INTERVAL}s"
+        if [ -n "$EXPECTED_CONTENT" ]; then
+          echo "Expected content: $EXPECTED_CONTENT"
+        fi
 
-        until curl -sf "$HEALTH_URL" > /dev/null 2>&1; do
+        check_health() {
+          if [ -n "$EXPECTED_CONTENT" ]; then
+            RESPONSE=$(curl -sf "$HEALTH_URL" 2>/dev/null) || return 1
+            echo "$RESPONSE" | grep -qF "$EXPECTED_CONTENT"
+          else
+            curl -sf "$HEALTH_URL" > /dev/null 2>&1
+          fi
+        }
+
+        until check_health; do
           if [ $ATTEMPT -ge $MAX_ATTEMPTS ]; then
             echo "::error::Deployment verification failed after $MAX_ATTEMPTS attempts"
             echo "Health endpoint $HEALTH_URL did not return a healthy response."
+            if [ -n "$EXPECTED_CONTENT" ]; then
+              echo "Expected response to contain: $EXPECTED_CONTENT"
+              echo "Last response: $RESPONSE"
+            fi
             exit 1
           fi
           echo "Attempt $ATTEMPT/$MAX_ATTEMPTS failed. Retrying in ${RETRY_INTERVAL}s..."
