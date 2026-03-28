@@ -1,6 +1,10 @@
 name: 'Verify Deployment'
 description: 'Polls a health endpoint with retries to verify a deployment is live and healthy.'
 
+branding:
+  icon: 'check-circle'
+  color: 'green'
+
 inputs:
   health-url:
     required: true
