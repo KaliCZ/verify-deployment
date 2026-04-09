@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run actionlint
+        uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8  # v2
+        with:
+          shellcheck: true
+
+  smoke-test:
+    name: smoke-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Start mock health server
+        run: |
+          mkdir -p /tmp/mock
+          printf 'healthy deadbeef' > /tmp/mock/health
+          python3 -m http.server 8080 --directory /tmp/mock &
+          # Wait until the server is actually accepting connections
+          for _ in $(seq 1 20); do
+            if curl -sf http://localhost:8080/health > /dev/null; then
+              echo "mock server up"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "mock server failed to start"
+          exit 1
+
+      - name: Verify basic health check passes
+        uses: ./
+        with:
+          health-url: http://localhost:8080/health
+          max-attempts: 5
+          retry-interval: 1
+
+      - name: Verify expected-content match passes
+        uses: ./
+        with:
+          health-url: http://localhost:8080/health
+          expected-content: deadbeef
+          max-attempts: 5
+          retry-interval: 1
+
+      - name: Verify expected-content mismatch fails (negative test)
+        id: negative
+        continue-on-error: true
+        uses: ./
+        with:
+          health-url: http://localhost:8080/health
+          expected-content: this-string-is-not-in-the-response
+          max-attempts: 2
+          retry-interval: 1
+
+      - name: Assert negative test actually failed
+        if: steps.negative.outcome != 'failure'
+        run: |
+          echo "::error::Expected the negative test to fail, but it reported outcome=${{ steps.negative.outcome }}"
+          exit 1
+
+      - name: Verify unreachable endpoint fails (negative test)
+        id: unreachable
+        continue-on-error: true
+        uses: ./
+        with:
+          health-url: http://localhost:9999/nope
+          max-attempts: 2
+          retry-interval: 1
+
+      - name: Assert unreachable test actually failed
+        if: steps.unreachable.outcome != 'failure'
+        run: |
+          echo "::error::Expected the unreachable test to fail, but it reported outcome=${{ steps.unreachable.outcome }}"
+          exit 1
